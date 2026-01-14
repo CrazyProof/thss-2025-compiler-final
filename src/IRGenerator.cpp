@@ -135,11 +135,27 @@ namespace sysy
     Type *IRGenerator::getArrayType(Type *baseType, const std::vector<int> &dims)
     {
         Type *ty = baseType;
-        for (int dim : dims)
+        for (auto it = dims.rbegin(); it != dims.rend(); ++it)
         {
-            ty = allocType<ArrayType>(ty, dim);
+            ty = allocType<ArrayType>(ty, *it);
         }
         return ty;
+    }
+
+    std::string IRGenerator::uniqueValueName(const std::string &base)
+    {
+        auto &counter = valueNameCounters[base];
+        if (counter == 0)
+        {
+            counter = 1;
+            return base;
+        }
+        return base + "." + std::to_string(counter++);
+    }
+
+    std::string IRGenerator::uniqueBlockName(const std::string &base)
+    {
+        return base + "." + std::to_string(blockCounter++);
     }
 
     Value *IRGenerator::getLValPointer(SysYParser::LValContext *ctx)
@@ -256,9 +272,12 @@ namespace sysy
         }
         else
         {
-            Value *alloca = builder.createAlloca(varType, name);
+            Value *alloca = builder.createAlloca(varType, uniqueValueName(name));
             int initVal = ctx->constInitVal()->constExp() ? evaluateConstExp(ctx->constInitVal()->constExp()) : 0;
-            builder.createStore(ConstantInt::get(initVal), alloca);
+            if (!varType->isArrayType())
+            {
+                builder.createStore(ConstantInt::get(initVal), alloca);
+            }
             symbolTable.addSymbol(name, {alloca, varType, true, initVal});
         }
         return nullptr;
@@ -295,8 +314,8 @@ namespace sysy
         }
         else
         {
-            Value *alloca = builder.createAlloca(varType, name);
-            if (hasInit && ctx->initVal()->exp())
+            Value *alloca = builder.createAlloca(varType, uniqueValueName(name));
+            if (hasInit && ctx->initVal()->exp() && !varType->isArrayType())
             {
                 Value *init = std::any_cast<Value *>(visit(ctx->initVal()->exp()));
                 builder.createStore(init, alloca);
@@ -308,6 +327,11 @@ namespace sysy
 
     std::any IRGenerator::visitFuncDef(SysYParser::FuncDefContext *ctx)
     {
+        // Reset per-function counters to keep SSA names unique but readable
+        blockCounter = 0;
+        valueNameCounters.clear();
+        builder.resetTmpCounter();
+
         Type *retType = ctx->funcType()->INT() ? (Type *)IntType::get() : (Type *)VoidType::get();
         std::vector<Type *> params;
         if (auto *fps = ctx->funcFParams())
@@ -341,13 +365,15 @@ namespace sysy
             {
                 auto *arg = new Argument(params[idx], fp->IDENT()->getText(), func, idx);
                 func->addArgument(arg);
+                // Reserve the raw argument name so subsequent allocas use a suffixed name
+                valueNameCounters[arg->getName()] = std::max(valueNameCounters[arg->getName()], 1u);
                 // Allocate and store argument to allow addressable use
                 builder.setInsertPoint(nullptr);
                 BasicBlock *entry = func->getBasicBlocks().empty()
-                                        ? builder.createBasicBlock("entry", func)
+                                        ? builder.createBasicBlock(uniqueBlockName("entry"), func)
                                         : func->getBasicBlocks().front().get();
                 builder.setInsertPoint(entry);
-                Value *slot = builder.createAlloca(params[idx], arg->getName());
+                Value *slot = builder.createAlloca(params[idx], uniqueValueName(arg->getName()));
                 builder.createStore(arg, slot);
                 symbolTable.addSymbol(arg->getName(), {slot, params[idx], false, 0});
                 ++idx;
@@ -357,7 +383,7 @@ namespace sysy
         // Ensure we have an entry block for subsequent code
         if (func->getBasicBlocks().empty())
         {
-            builder.createBasicBlock("entry", func);
+            builder.createBasicBlock(uniqueBlockName("entry"), func);
         }
         builder.setInsertPoint(func->getBasicBlocks().front().get());
         visit(ctx->block());
@@ -419,9 +445,9 @@ namespace sysy
     std::any IRGenerator::visitIfStmt(SysYParser::IfStmtContext *ctx)
     {
         Function *func = builder.getCurrentFunction();
-        BasicBlock *thenBB = builder.createBasicBlock("if.then", func);
-        BasicBlock *elseBB = ctx->ELSE() ? builder.createBasicBlock("if.else", func) : nullptr;
-        BasicBlock *mergeBB = builder.createBasicBlock("if.end", func);
+        BasicBlock *thenBB = builder.createBasicBlock(uniqueBlockName("if.then"), func);
+        BasicBlock *elseBB = ctx->ELSE() ? builder.createBasicBlock(uniqueBlockName("if.else"), func) : nullptr;
+        BasicBlock *mergeBB = builder.createBasicBlock(uniqueBlockName("if.end"), func);
 
         Value *cond = std::any_cast<Value *>(visit(ctx->cond()));
         if (auto *it = dynamic_cast<IntType *>(cond->getType()); it && it->getBitWidth() != 1)
@@ -453,9 +479,9 @@ namespace sysy
     std::any IRGenerator::visitWhileStmt(SysYParser::WhileStmtContext *ctx)
     {
         Function *func = builder.getCurrentFunction();
-        BasicBlock *condBB = builder.createBasicBlock("while.cond", func);
-        BasicBlock *bodyBB = builder.createBasicBlock("while.body", func);
-        BasicBlock *endBB = builder.createBasicBlock("while.end", func);
+        BasicBlock *condBB = builder.createBasicBlock(uniqueBlockName("while.cond"), func);
+        BasicBlock *bodyBB = builder.createBasicBlock(uniqueBlockName("while.body"), func);
+        BasicBlock *endBB = builder.createBasicBlock(uniqueBlockName("while.end"), func);
 
         builder.createBr(condBB);
 

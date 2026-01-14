@@ -94,13 +94,23 @@ namespace sysy
 
         ss << funcType->getReturnType()->toString() << " @" << name << "(";
 
-        for (size_t i = 0; i < arguments.size(); ++i)
+        if (isDeclare)
         {
-            if (i > 0)
-                ss << ", ";
-            ss << arguments[i]->getType()->toString();
-            if (!isDeclare)
+            const auto &paramTypes = funcType->getParamTypes();
+            for (size_t i = 0; i < paramTypes.size(); ++i)
             {
+                if (i > 0)
+                    ss << ", ";
+                ss << paramTypes[i]->toString();
+            }
+        }
+        else
+        {
+            for (size_t i = 0; i < arguments.size(); ++i)
+            {
+                if (i > 0)
+                    ss << ", ";
+                ss << arguments[i]->getType()->toString();
                 ss << " %" << arguments[i]->getName();
             }
         }

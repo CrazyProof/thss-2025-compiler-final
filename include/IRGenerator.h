@@ -8,6 +8,7 @@
 #include <memory>
 #include <stack>
 #include <vector>
+#include <unordered_map>
 
 namespace sysy
 {
@@ -73,6 +74,10 @@ namespace sysy
         Value *getLValPointer(SysYParser::LValContext *ctx);
         Type *getArrayType(Type *baseType, const std::vector<int> &dims);
 
+        // Name helpers to keep SSA names unique
+        std::string uniqueValueName(const std::string &base);
+        std::string uniqueBlockName(const std::string &base);
+
         // Generate short-circuit evaluation for logical expressions
         Value *generateShortCircuitAnd(SysYParser::LAndExpContext *ctx);
         Value *generateShortCircuitOr(SysYParser::LOrExpContext *ctx);
@@ -95,6 +100,9 @@ namespace sysy
 
         // Block counter for unique naming
         unsigned blockCounter;
+
+        // Track how many times a source name was used to uniquify SSA names
+        std::unordered_map<std::string, unsigned> valueNameCounters;
 
         // Type management
         std::vector<std::unique_ptr<Type>> allocatedTypes;
